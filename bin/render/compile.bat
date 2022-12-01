@@ -1,0 +1,1 @@
+nvcc --shared -o "..\render.dll" render.cu -O=2 -dopt=on -opt-info=inline -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_60,code=sm_60 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_80,code=sm_80 -gencode arch=compute_90,code=sm_90 -t 0 -Wno-deprecated-gpu-targets -I. -Xcompiler /openmp

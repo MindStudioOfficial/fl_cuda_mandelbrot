@@ -1,0 +1,6 @@
+output: '../../lib/bindings/render_bindings.dart'
+headers:
+  entry-points:
+    - 'render.h'
+name: 'RenderFFI'
+description: 'Mandelbrot Rendering FFI bindings'
