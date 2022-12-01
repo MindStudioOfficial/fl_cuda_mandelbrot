@@ -11,6 +11,14 @@ import 'package:ffi/ffi.dart' as ffi;
 late Texturerender tr;
 final RenderFFI render = RenderFFI(ffi.DynamicLibrary.open("bin/render.dll"));
 
+/*
+You can change these parameters 
+based on your preferences
+*/
+int frameWidth = 3840;
+int frameHeight = 2160;
+int iterations = 2000;
+
 void main() async {
   tr = Texturerender();
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,8 +46,7 @@ class Main extends StatefulWidget {
 class _MainState extends State<Main> with WindowListener {
   int texID = 1;
   bool texInit = false;
-  int fWidth = 3840;
-  int fHeight = 2160;
+
   Rect def = const Rect.fromLTRB(-2, -1, 1, 1);
   Rect rect = const Rect.fromLTRB(-2, -1, 1, 1);
   Rect? prev;
@@ -75,10 +82,10 @@ class _MainState extends State<Main> with WindowListener {
       if (data is int) {
         _pBuf = ffi.Pointer.fromAddress(data);
 
-        int s = fWidth * fHeight * 4;
+        int s = frameWidth * frameHeight * 4;
         ffi.Pointer<ffi.Uint8> buffer = ffi.calloc.call<ffi.Uint8>(s);
         buffer.asTypedList(s).setAll(0, _pBuf.asTypedList(s));
-        tr.update(texID, buffer, fWidth, fHeight);
+        tr.update(texID, buffer, frameWidth, frameHeight);
         setState(() {
           rendering = false;
         });
@@ -98,8 +105,8 @@ class _MainState extends State<Main> with WindowListener {
         compute,
         CObject(
           _cReceivePort!.sendPort,
-          fHeight: fHeight,
-          fWidth: fWidth,
+          fHeight: frameHeight,
+          fWidth: frameWidth,
           l: rect.left,
           r: rect.right,
           t: rect.top,
@@ -111,7 +118,7 @@ class _MainState extends State<Main> with WindowListener {
     ffi.Pointer<ffi.Uint8> pBuf =
         render.setupCanvas(object.fWidth, object.fHeight, object.l, object.r, object.b, object.t);
 
-    for (int i = 0; i < 2000; i++) {
+    for (int i = 0; i < iterations; i++) {
       Stopwatch sw = Stopwatch()..start();
       render.iterate();
       //print("iterating: ${sw.elapsedMilliseconds}");
