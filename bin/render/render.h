@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-void iterate();
+void iterate(int max_iters);
 
 void draw();
 

@@ -4,10 +4,9 @@ int w, h;
 double r1, r2, i1, i2;
 bool setup = false;
 uint64_t *d_iters = nullptr;
-Complex_t *d_vals = nullptr;
 uint8_t *img = nullptr, *d_img = nullptr;
 
-uint64_t maxiter = 0;
+uint64_t max_iter = 0;
 
 __device__ Complex_t operator+(Complex_t a, Complex_t b)
 {
@@ -19,6 +18,11 @@ __device__ Complex_t operator*(Complex_t a, Complex_t b)
 {
     Complex_t c = {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
     return c;
+}
+
+__device__ double complexNoRootAbs(Complex_t a)
+{
+    return a.re * a.re + a.im * a.im;
 }
 
 __device__ double cabs(Complex_t c)
@@ -81,32 +85,40 @@ __device__ uchar3 hsvToRGB(float3 hsv)
     return make_uchar3(red, green, blue);
 }
 
-__global__ void kernelIterate(int w, int h, double r1, double r2, double i1, double i2, uint64_t *d_iters, Complex_t *d_vals)
+__global__ void kernelIterate(int w, int h, double r1, double r2, double i1, double i2, uint64_t *d_iters, int max_iters)
 {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
 
-    int pix = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pix >= w * h)
+    if (idx >= w || idy >= h)
         return;
 
-    unsigned int px = pix % w;
-    unsigned int py = h - (int)floorf(pix / (float)w);
+    int pix = idy * w + idx;
 
-    double real = r1 + ((r2 - r1) / w) * px;
-    double imag = i1 + ((i2 - i1) / h) * py;
+    double real = r1 + ((r2 - r1) / w) * idx;
+    double imag = i1 + ((i2 - i1) / h) * idy;
 
-    Complex_t z = d_vals[pix];
-    if (cabs(z) > 1000)
-        return;
+    Complex_t z = {0, 0};
     Complex_t c = {real, imag};
-    d_vals[pix] = z * z + c;
-    d_iters[pix]++;
+
+    int i = 0;
+    while (complexNoRootAbs(z) <= 4.0 && i < max_iters)
+    {
+        z = z * z + c;
+        i++;
+    }
+    d_iters[pix] = i;
 }
 
 __global__ void kernelDraw(int width, int height, uint64_t *d_iters, uint8_t *d_img, uint64_t maxiter)
 {
-    int pix = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pix >= width * height)
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (idx >= width || idy >= height)
         return;
+
+    int pix = idy * width + idx;
 
     int64_t i = d_iters[pix];
 
@@ -125,25 +137,24 @@ __global__ void kernelDraw(int width, int height, uint64_t *d_iters, uint8_t *d_
     d_img[pix * 4 + 2] = rgb.z;
 }
 
-EXTERNC void iterate()
+EXTERNC void iterate(int max_iters)
 {
     if (!setup)
     {
         printf("call setupCanvas before iterating!\n");
         return;
     }
+    max_iter = max_iters;
 
     int pixs = w * h;
 
     int bw = THREADS;
-    dim3 bs = dim3(bw);
-    dim3 gs = dim3((unsigned int)ceilf(pixs / (float)bw));
+    dim3 bs = dim3(16, 16);
+    dim3 gs = dim3((w + bs.x - 1) / bs.x, (h + bs.y - 1) / bs.y);
 
-    kernelIterate<<<gs, bs>>>(w, h, r1, r2, i1, i2, d_iters, d_vals);
+    kernelIterate<<<gs, bs>>>(w, h, r1, r2, i1, i2, d_iters, max_iters);
 
     cudaDeviceSynchronize();
-
-    maxiter++;
 }
 
 EXTERNC void draw()
@@ -155,17 +166,18 @@ EXTERNC void draw()
     }
 
     int pixs = w * h;
-    int bw = THREADS;
-    dim3 bs = dim3(bw);
-    dim3 gs = dim3((unsigned int)ceilf(pixs / (float)bw));
+    dim3 bs = dim3(16, 16);
+    dim3 gs = dim3((w + bs.x - 1) / bs.x, (h + bs.y - 1) / bs.y);
 
-    kernelDraw<<<gs, bs>>>(w, h, d_iters, d_img, maxiter);
+    kernelDraw<<<gs, bs>>>(w, h, d_iters, d_img, max_iter);
 
     cudaDeviceSynchronize();
 
     size_t imgsize = sizeof(uint8_t) * pixs * 4;
 
     cudaMemcpy(img, d_img, imgsize, cudaMemcpyDeviceToHost);
+
+    cudaDeviceSynchronize();
 }
 
 EXTERNC void dispose()
@@ -175,20 +187,10 @@ EXTERNC void dispose()
         cudaFree(d_iters);
         d_iters = nullptr;
     }
-    if (d_vals != nullptr)
-    {
-        cudaFree(d_vals);
-        d_vals = nullptr;
-    }
     if (d_img != nullptr)
     {
         cudaFree(d_img);
         d_img = nullptr;
-    }
-    if (img != nullptr)
-    {
-        free(img);
-        img = nullptr;
     }
     setup = false;
 }
@@ -202,8 +204,6 @@ EXTERNC uint8_t *setupCanvas(int fWidth, int fHeight, double re1, double re2, do
     r2 = re2;
     i1 = im1;
     i2 = im2;
-
-    maxiter = 0;
 
     size_t itersize = sizeof(uint64_t) * w * h;
 
@@ -219,8 +219,7 @@ EXTERNC uint8_t *setupCanvas(int fWidth, int fHeight, double re1, double re2, do
 
     size_t valssize = sizeof(Complex_t) * w * h;
 
-    cudaMalloc(&d_vals, valssize);
-    cudaMemset(d_vals, 0, valssize);
+    cudaDeviceSynchronize();
 
     setup = true;
 

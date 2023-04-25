@@ -1,12 +1,10 @@
 import 'dart:isolate';
-import 'dart:math';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mandelbrot/bindings/render_bindings.dart';
 import 'package:texturerender/texturerender.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:ffi' as ffi;
-import 'package:ffi/ffi.dart' as ffi;
 
 late Texturerender tr;
 final RenderFFI render = RenderFFI(ffi.DynamicLibrary.open("bin/render.dll"));
@@ -75,17 +73,13 @@ class _MainState extends State<Main> with WindowListener {
   Future<void> rerender() async {
     _cReceivePort = ReceivePort();
 
-    ffi.Pointer<ffi.Uint8> _pBuf; // is freed later by dispose
+    ffi.Pointer<ffi.Uint8> pBuf;
 
     _cReceivePort?.listen((data) {
-      print(data);
       if (data is int) {
-        _pBuf = ffi.Pointer.fromAddress(data);
+        pBuf = ffi.Pointer.fromAddress(data);
 
-        int s = frameWidth * frameHeight * 4;
-        ffi.Pointer<ffi.Uint8> buffer = ffi.calloc.call<ffi.Uint8>(s);
-        buffer.asTypedList(s).setAll(0, _pBuf.asTypedList(s));
-        tr.update(texID, buffer, frameWidth, frameHeight);
+        tr.update(texID, pBuf, frameWidth, frameHeight);
         setState(() {
           rendering = false;
         });
@@ -93,7 +87,6 @@ class _MainState extends State<Main> with WindowListener {
         _cIsolate = null;
         _cReceivePort?.close();
         _cReceivePort = null;
-        render.dispose();
       }
     });
 
@@ -115,15 +108,20 @@ class _MainState extends State<Main> with WindowListener {
   }
 
   static void compute(CObject object) {
+    Stopwatch sw = Stopwatch()..start();
     ffi.Pointer<ffi.Uint8> pBuf =
         render.setupCanvas(object.fWidth, object.fHeight, object.l, object.r, object.b, object.t);
 
-    for (int i = 0; i < iterations; i++) {
-      Stopwatch sw = Stopwatch()..start();
-      render.iterate();
-      //print("iterating: ${sw.elapsedMilliseconds}");
+    render.iterate(iterations);
+
+    if (kDebugMode) {
+      print("Finished iterating after ${sw.elapsedMicroseconds}μs");
     }
     render.draw();
+    if (kDebugMode) {
+      print("Finished rendering after ${sw.elapsedMicroseconds}μs");
+    }
+    render.dispose();
     object.sp.send(pBuf.address);
   }
 
@@ -195,7 +193,9 @@ class _MainState extends State<Main> with WindowListener {
                   Offset pos = event.localPosition;
                   Offset coords = posToCoord(pos, constraints.biggest);
                   start = coords;
-                  print("(${coords.dx})+i(${coords.dy})");
+                  if (kDebugMode) {
+                    print("(${coords.dx})+i(${coords.dy})");
+                  }
                 },
                 onPointerUp: (event) {
                   Offset pos = event.localPosition;
@@ -211,7 +211,9 @@ class _MainState extends State<Main> with WindowListener {
                   Size s = Size(w, -w / constraints.biggest.aspectRatio);
                   Rect rec = topleft & s;
 
-                  print(rec);
+                  if (kDebugMode) {
+                    print(rec);
+                  }
 
                   setState(() {
                     prev = rect;

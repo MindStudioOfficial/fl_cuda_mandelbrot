@@ -15,7 +15,7 @@ typedef struct Complex {
     double re, im;
 } Complex_t;
 
-EXTERNC void iterate();
+EXTERNC void iterate(int max_iters);
 
 EXTERNC void draw();
 
