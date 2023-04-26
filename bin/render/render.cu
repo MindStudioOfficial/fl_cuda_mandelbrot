@@ -96,7 +96,7 @@ __global__ void kernelIterate(int w, int h, double r1, double r2, double i1, dou
     int pix = idy * w + idx;
 
     double real = r1 + ((r2 - r1) / w) * idx;
-    double imag = i1 + ((i2 - i1) / h) * idy;
+    double imag = i1 + ((i2 - i1) / h) * (h - idy - 1);
 
     Complex_t z = {0, 0};
     Complex_t c = {real, imag};

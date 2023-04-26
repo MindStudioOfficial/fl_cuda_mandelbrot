@@ -17,6 +17,13 @@ int frameWidth = 3840;
 int frameHeight = 2160;
 int iterations = 2000;
 
+extension MapExtension on double {
+  double map(double inMin, double inMax, double outMin, double outMax) {
+    double slope = (outMax - outMin) / (inMax - inMin);
+    return outMin + slope * (this - inMin);
+  }
+}
+
 void main() async {
   tr = Texturerender();
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +53,7 @@ class _MainState extends State<Main> with WindowListener {
   bool texInit = false;
 
   Rect def = const Rect.fromLTRB(-2, -1, 1, 1);
-  Rect rect = const Rect.fromLTRB(-2, -1, 1, 1);
+  Rect complexPlaneRect = const Rect.fromLTRB(-2, -1, 1, 1);
   Rect? prev;
 
   bool rendering = false;
@@ -100,17 +107,17 @@ class _MainState extends State<Main> with WindowListener {
           _cReceivePort!.sendPort,
           fHeight: frameHeight,
           fWidth: frameWidth,
-          l: rect.left,
-          r: rect.right,
-          t: rect.top,
-          b: rect.bottom,
+          l: complexPlaneRect.left,
+          r: complexPlaneRect.right,
+          t: complexPlaneRect.top,
+          b: complexPlaneRect.bottom,
         ));
   }
 
   static void compute(CObject object) {
     Stopwatch sw = Stopwatch()..start();
     ffi.Pointer<ffi.Uint8> pBuf =
-        render.setupCanvas(object.fWidth, object.fHeight, object.l, object.r, object.b, object.t);
+        render.setupCanvas(object.fWidth, object.fHeight, object.l, object.r, object.t, object.b);
 
     render.iterate(iterations);
 
@@ -146,15 +153,23 @@ class _MainState extends State<Main> with WindowListener {
   }
 
   Offset posToCoord(Offset pos, Size s) {
-    double real = rect.left + ((rect.right - rect.left) / s.width) * (pos.dx);
-    double imag = rect.bottom + ((rect.top - rect.bottom) / s.height) * (s.height - pos.dy);
+    double real = pos.dx.map(0, s.width, complexPlaneRect.left, complexPlaneRect.right);
+    double imag = pos.dy.map(0, s.height, complexPlaneRect.bottom, complexPlaneRect.top);
 
     return Offset(real, imag);
   }
 
-  Offset? start;
-  Offset? end;
+  Offset coordToPos(Offset coord, Rect rect, Size size) {
+    double x = coord.dx.map(rect.left, rect.right, 0, size.width);
+    double y = coord.dy.map(rect.bottom, rect.top, 0, size.height);
+    return Offset(x, y);
+  }
 
+  Offset? startCoords;
+  Offset? endCoords;
+  Offset? current;
+  bool dragging = false;
+  Rect? currentRect;
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -171,62 +186,104 @@ class _MainState extends State<Main> with WindowListener {
                   child: CircularProgressIndicator(),
                 ),
               Listener(
+                onPointerMove: (event) {
+                  //* UPDATE CURRENT
+                  Offset pos = event.localPosition;
+                  setState(() {
+                    current = posToCoord(pos, constraints.biggest);
+                  });
+
+                  //* GET START POSITION FOR VISUAL RECT
+                  if (startCoords == null) return;
+
+                  Offset startPos = coordToPos(startCoords!, complexPlaneRect, constraints.biggest);
+
+                  Rect t = Rect.fromPoints(startPos, pos);
+
+                  double hDelta = t.height - t.width / constraints.biggest.aspectRatio;
+
+                  if (pos.dy > startPos.dy) pos = Offset(pos.dx, pos.dy - hDelta);
+                  if (pos.dy <= startPos.dy) pos = Offset(pos.dx, pos.dy + hDelta);
+
+                  t = Rect.fromPoints(startPos, pos);
+
+                  setState(() {
+                    currentRect = t;
+                  });
+                },
                 onPointerHover: (event) {
                   Offset pos = event.localPosition;
+                  setState(() {
+                    current = posToCoord(pos, constraints.biggest);
+                  });
                 },
                 onPointerDown: (event) {
                   if (event.buttons & 4 != 0) {
+                    // MIDDLE MOUS BUTTON = RESET
                     setState(() {
-                      prev = rect;
-                      rect = def;
+                      prev = complexPlaneRect;
+                      complexPlaneRect = def;
                       rerender();
                     });
                   }
                   if (event.buttons & 2 != 0 && prev != null) {
+                    // RIGHT MOUSE BUTTON = PREVIOUS
                     setState(() {
-                      rect = prev!;
+                      complexPlaneRect = prev!;
                       prev = null;
                       rerender();
                     });
                   }
-                  if (event.buttons & 1 == 0) return;
+                  if (event.buttons & 1 == 0) return; // LEFT MOUSE BUTTON = start draw rect
+                  dragging = true;
                   Offset pos = event.localPosition;
                   Offset coords = posToCoord(pos, constraints.biggest);
-                  start = coords;
+                  setState(() {
+                    startCoords = coords;
+                  });
                   if (kDebugMode) {
                     print("(${coords.dx})+i(${coords.dy})");
                   }
                 },
                 onPointerUp: (event) {
-                  Offset pos = event.localPosition;
-                  Offset coords = posToCoord(pos, constraints.biggest);
-                  end = coords;
-                  if (start == null) return;
-
-                  Offset topleft = Offset(
-                    start!.dx < end!.dx ? start!.dx : end!.dx,
-                    start!.dy > end!.dy ? start!.dy : end!.dy,
-                  );
-                  double w = (end!.dx - start!.dx).abs();
-                  Size s = Size(w, -w / constraints.biggest.aspectRatio);
-                  Rect rec = topleft & s;
-
-                  if (kDebugMode) {
-                    print(rec);
-                  }
+                  if (!dragging) return;
+                  dragging = false;
+                  if (currentRect == null) return;
 
                   setState(() {
-                    prev = rect;
-                    rect = rec;
+                    complexPlaneRect = Rect.fromPoints(
+                      posToCoord(currentRect!.topLeft, constraints.biggest),
+                      posToCoord(currentRect!.bottomRight, constraints.biggest),
+                    );
+                    prev = complexPlaneRect;
+                    currentRect = null;
                     rerender();
                   });
-                  start = null;
-                  end = null;
                 },
                 child: const MouseRegion(
                   cursor: SystemMouseCursors.precise,
                 ),
-              )
+              ),
+              Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  "${current?.dx} + ${current?.dy}i",
+                  //"Real: ${complexPlaneRect.left} to ${complexPlaneRect.right}"
+                  //"Imag: ${complexPlaneRect.top} to ${complexPlaneRect.bottom}"
+
+                  style: const TextStyle(color: Colors.white, fontSize: 25),
+                ),
+              ),
+              if (currentRect != null && dragging)
+                Positioned(
+                  top: currentRect!.top,
+                  left: currentRect!.left,
+                  child: Container(
+                    color: Colors.white.withOpacity(.5),
+                    width: currentRect!.width,
+                    height: currentRect!.height,
+                  ),
+                ),
             ],
           );
         }),
